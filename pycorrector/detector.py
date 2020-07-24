@@ -51,6 +51,7 @@ class Detector(object):
         self.person_name_path = person_name_path
         self.place_name_path = place_name_path
         self.stopwords_path = stopwords_path
+        # 默认打开字粒度和词粒度两方面检测
         self.is_char_error_detect = True
         self.is_word_error_detect = True
         self.initialized_detector = False
@@ -373,12 +374,26 @@ class Detector(object):
         # 初始化
         self.check_detector_initialized()
         # 自定义混淆集加入疑似错误词典
+
+        """
+        直接在句子中遍历是否在混淆集中有出现，出现则直接添加到错误列表中。严格的匹配逻辑，可以通过修改混淆集文件，进行词的添加删除。
+        """
         for confuse in self.custom_confusion:
             idx = sentence.find(confuse)
             if idx > -1:
                 maybe_err = [confuse, idx + start_idx, idx + len(confuse) + start_idx, ErrorType.confusion]
                 self._add_maybe_error_item(maybe_err, maybe_errors)
 
+        """
+        错误检测部分先通过结巴中文分词器切词，由于句子中含有错别字，所以切词结果往往会有切分错误的情况，
+        这样从字粒度和词粒度两方面检测错误， 整合这两种粒度的疑似错误结果，形成疑似错误位置候选集；
+
+        词级别搜索:
+        依次进行切词，然后遍历每个词，若词不在词典中，也认为是错误。
+        这类词包括一些实体，一些错词，一些没有在词典中出现过，但是是正确的词等。
+        这条规则比较严格，错词不放过，但是也错杀了一些其他正确词。
+        但是优点同第一，可以灵活修改词典。因此，这步需要一个好的预先构造的词典。
+        """
         if self.is_word_error_detect:
             # 切词
             tokens = self.tokenizer.tokenize(sentence)
@@ -393,6 +408,16 @@ class Detector(object):
                 maybe_err = [token, begin_idx + start_idx, end_idx + start_idx, ErrorType.word]
                 self._add_maybe_error_item(maybe_err, maybe_errors)
 
+        """
+        与词级别搜索不同，字级别不需要进行切词，依次进行打分。分数由一个基于人民日报语料预训练好的语言模型得出。 
+        具体计算步骤如下: 
+        1. 计算基于字的2-gram和3-gram的得分列表，二者取平均得到sent的每个字的分数。 
+        2. 根据每个字的平均得分列表，找到可能的错误字的位置。
+
+        根据每个字的平均得分列表，找到可能的错误字的位置(self._get_maybe_error_index)；
+        因此，这里要考虑找错的具体逻辑。代码中的实现是基于类似平均绝对离差（MAD）的统计概念，
+        这里也是一个策略上的改进的方向，甚至多种策略的共同组合判断。
+        """
         if self.is_char_error_detect:
             # 语言模型检测疑似错误字
             try:
@@ -401,6 +426,7 @@ class Detector(object):
                     scores = []
                     for i in range(len(sentence) - n + 1):
                         word = sentence[i:i + n]
+                        # 这里的ngram_score底层实现都是使用language model
                         score = self.ngram_score(list(word))
                         scores.append(score)
                     if not scores:

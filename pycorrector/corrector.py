@@ -144,6 +144,9 @@ class Corrector(Detector):
         self.check_detector_initialized()
         return set(word for word in words if word in self.word_freq)
 
+    """
+    获取同音字和形近字
+    """
     def _confusion_char_set(self, c):
         return self.get_same_pinyin(c).union(self.get_same_stroke(c))
 
@@ -179,8 +182,25 @@ class Corrector(Detector):
 
         # same pinyin word
         candidates_1.extend(self._confusion_word_set(word))
+        # 第一种情况：confusion,如果是自定义混淆集中的错误，直接修改为对应的正确的值就可以了。
         # custom confusion word
         candidates_1.extend(self._confusion_custom_set(word))
+
+        """
+        第二种情况：对于word和char两种情况，没有对应的正确的值，就需要通过语言模型来从候选集中找了。
+
+        候选集的构造逻辑如下，输入是item，也就是检错阶段得到的可能的错误词。首先，同音字和形近字表共同可以构建一个基于字的混淆集(confusion_char_set)。其次，借助于常用字表和item之间的编辑距离，可以构建一个比较粗的候选词集，通过常用词表可以做一个过滤，最后加上同音的限制条件，可以得到一个更小的基于词的混淆集(confusion_word_set)。最后，还有一个自定义的混淆集(confusion_custom _set)。
+
+        有了上述的表，就可以构建候选集了。通过候选词的长度来分情况讨论：
+
+        第一：长度为1。直接利用基于字的混淆集来替换。
+
+        第二：长度为2。分别替换每一个字。
+
+        第三：长度为3。同上。
+
+        最后，合并所有的候选集。那么通过上述的构造过程，可能导致一些无效词或者字的出现，因此要做一些过滤处理，最后按照选出一些候选集的子集来处理。代码中的规则是基于词频来处理，选择topk个词作为候选集。
+        """
         # same pinyin char
         if len(word) == 1:
             # same one char pinyin
@@ -266,6 +286,10 @@ class Corrector(Detector):
         blocks = self.split_2_short_text(text, include_symbol=include_symbol)
         for blk, idx in blocks:
             maybe_errors = self.detect_short(blk, idx)
+
+            """
+            错误纠正部分，是遍历所有的疑似错误位置，并使用音似、形似词典替换错误位置的词，然后通过语言模型计算句子困惑度，对所有候选集结果比较并排序，得到最优纠正词。
+            """
             for cur_item, begin_idx, end_idx, err_type in maybe_errors:
                 # 纠错，逐个处理
                 before_sent = blk[:(begin_idx - idx)]
@@ -279,6 +303,8 @@ class Corrector(Detector):
                     candidates = self.generate_items(cur_item, fragment=num_fragment)
                     if not candidates:
                         continue
+
+                    # 语言模型选择最合适的纠正词
                     corrected_item = self.get_lm_correct_item(cur_item, candidates, before_sent, after_sent,
                                                               threshold=threshold)
                 # output

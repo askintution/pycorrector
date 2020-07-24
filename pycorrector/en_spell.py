@@ -53,6 +53,9 @@ class EnSpell(object):
         if not self.WORDS:
             self._init()
 
+    """
+    概率计算，计算方法是使用当前词的频率/总得词频数量
+    """
     def probability(self, word):
         """
         probability of word
@@ -72,6 +75,9 @@ class EnSpell(object):
         self.check_init()
         return max(self.candidates(word), key=self.probability)
 
+    """
+    首先，通过candidates方法获得可能的正确地拼写词，获取编辑距离1，2内的候选值以及当前值和子集。
+    """
     def candidates(self, word):
         """
         generate possible spelling corrections for word.
